@@ -1,5 +1,6 @@
 package org.superbiz.moviefun.albums;
 
+import org.apache.tika.Tika;
 import org.apache.tika.io.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,80 +10,76 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.superbiz.moviefun.BlobInfo;
 import org.superbiz.moviefun.blobstore.Blob;
 import org.superbiz.moviefun.blobstore.BlobStore;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URISyntaxException;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import static java.lang.String.format;
-import static org.springframework.http.MediaType.IMAGE_JPEG_VALUE;
 
-@Controller
+@RestController
 @RequestMapping("/albums")
 public class AlbumsController {
 
     private final Logger logger = LoggerFactory.getLogger(this.getClass());
     private final AlbumsBean albumsBean;
     private final BlobStore blobStore;
+    private final Tika tika = new Tika();
 
     public AlbumsController(AlbumsBean albumsBean, BlobStore blobStore) {
         this.albumsBean = albumsBean;
         this.blobStore = blobStore;
     }
 
-
     @GetMapping
-    public String index(Map<String, Object> model) {
-        model.put("albums", albumsBean.getAlbums());
-        return "albums";
+    public List<Album> findAll() {
+        return albumsBean.getAlbums();
     }
 
-    @GetMapping("/{albumId}")
-    public String details(@PathVariable long albumId, Map<String, Object> model) {
-        model.put("album", albumsBean.find(albumId));
-        return "albumDetails";
+    @GetMapping("/{id}")
+    public Album find(@PathVariable long id) {
+        return albumsBean.find(id);
     }
+
+    @PostMapping
+    public void create(@RequestBody Album album){
+        albumsBean.addAlbum(album);
+    }
+
 
     @PostMapping("/{albumId}/cover")
-    public String uploadCover(@PathVariable Long albumId, @RequestParam("file") MultipartFile uploadedFile) {
+    public void uploadCover(@PathVariable Long albumId, @RequestBody byte[] bytes) {
         logger.debug("Uploading cover for album with id {}", albumId);
 
-        if (uploadedFile.getSize() > 0) {
-            try {
-                tryToUploadCover(albumId, uploadedFile);
 
-            } catch (IOException e) {
-                logger.warn("Error while uploading album cover", e);
-            }
+        try {
+            tryToUploadCover(albumId, bytes);
+        } catch (IOException e) {
+            e.printStackTrace();
         }
-
-        return format("redirect:/albums/%d", albumId);
     }
 
     @GetMapping("/{albumId}/cover")
-    public HttpEntity<byte[]> getCover(@PathVariable long albumId) throws IOException, URISyntaxException {
+    public BlobInfo getCover(@PathVariable long albumId) throws IOException, URISyntaxException {
         Optional<Blob> maybeCoverBlob = blobStore.get(getCoverBlobName(albumId));
         Blob coverBlob = maybeCoverBlob.orElseGet(this::buildDefaultCoverBlob);
 
-        byte[] imageBytes = IOUtils.toByteArray(coverBlob.inputStream);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.parseMediaType(coverBlob.contentType));
-        headers.setContentLength(imageBytes.length);
-
-        return new HttpEntity<>(imageBytes, headers);
+        return new BlobInfo(coverBlob);
     }
 
 
-    private void tryToUploadCover(@PathVariable Long albumId, @RequestParam("file") MultipartFile uploadedFile) throws IOException {
+    private void tryToUploadCover(Long albumId, byte[] bytes) throws IOException {
         Blob coverBlob = new Blob(
-            getCoverBlobName(albumId),
-            uploadedFile.getInputStream(),
-            uploadedFile.getContentType()
+                getCoverBlobName(albumId),
+                new ByteArrayInputStream(bytes),
+                tika.detect(bytes)
         );
 
         blobStore.put(coverBlob);
